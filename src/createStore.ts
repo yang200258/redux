@@ -68,6 +68,8 @@ export default function createStore<
   preloadedState?: PreloadedState<S> | StoreEnhancer<Ext, StateExt>,
   enhancer?: StoreEnhancer<Ext, StateExt>
 ): Store<ExtendState<S, StateExt>, A, StateExt, Ext> & Ext {
+  // 传入enhancer情况下，preloadedState必须为和enhancer对应key的对象
+  // enhancer是函数且存在第四个参数也是函数，需要将多个enhancer合并
   if (
     (typeof preloadedState === 'function' && typeof enhancer === 'function') ||
     (typeof enhancer === 'function' && typeof arguments[3] === 'function')
@@ -78,12 +80,12 @@ export default function createStore<
         'together to a single function. See https://redux.js.org/tutorials/fundamentals/part-4-store#creating-a-store-with-enhancers for an example.'
     )
   }
-
+  // 如果preloadedState是函数并且enhancer没传值，则将preloadedState当作enhancer处理
   if (typeof preloadedState === 'function' && typeof enhancer === 'undefined') {
     enhancer = preloadedState as StoreEnhancer<Ext, StateExt>
     preloadedState = undefined
   }
-
+  // enhancer必须是一个函数
   if (typeof enhancer !== 'undefined') {
     if (typeof enhancer !== 'function') {
       throw new Error(
@@ -92,13 +94,13 @@ export default function createStore<
         )}'`
       )
     }
-
+    // 组合store高阶函数，返回createStore加强函数
     return enhancer(createStore)(
       reducer,
       preloadedState as PreloadedState<S>
     ) as Store<ExtendState<S, StateExt>, A, StateExt, Ext> & Ext
   }
-
+  // reducer必须是函数
   if (typeof reducer !== 'function') {
     throw new Error(
       `Expected the root reducer to be a function. Instead, received: '${kindOf(
@@ -143,7 +145,12 @@ export default function createStore<
     return currentState as S
   }
 
-  /**
+  /** 当 dispatch action 的时候就会执行
+   * 不建议在listener中添加dispatch，可能会造成死循环
+   * 如果要添加dispatch，需要满足：
+   * 1、必需在store中特定某个字段满足条件时调用
+   * 2、每次dispatch前订阅器都会保存一份快照，dispatch对当前listerner没有影响，但在下次时总会获取最近一次快照
+   * 3、listerner不能期望监听所有state变化，由于嵌套dispatch会导致state发生多次变化，所以必需保证所有订阅都发生在dispatch之前，就可以在调用listener时，就会得到最新的state
    * Adds a change listener. It will be called any time an action is dispatched,
    * and some part of the state tree may potentially have changed. You may then
    * call `getState()` to read the current state tree inside the callback.
@@ -167,6 +174,7 @@ export default function createStore<
    * @returns A function to remove this change listener.
    */
   function subscribe(listener: () => void) {
+    // 监听必须是函数
     if (typeof listener !== 'function') {
       throw new Error(
         `Expected the listener to be a function. Instead, received: '${kindOf(
@@ -174,7 +182,7 @@ export default function createStore<
         )}'`
       )
     }
-
+    // dispatch时，禁止调用监听
     if (isDispatching) {
       throw new Error(
         'You may not call store.subscribe() while the reducer is executing. ' +
@@ -183,34 +191,38 @@ export default function createStore<
           'See https://redux.js.org/api/store#subscribelistener for more details.'
       )
     }
-
+    // 定义订阅flag
     let isSubscribed = true
-
+    // 通过slice浅拷贝currentListener到nextListener
     ensureCanMutateNextListeners()
+    // 将当前订阅的监听器加入监听器队列
     nextListeners.push(listener)
-
+    // 若要解绑，则执行subscribe返回函数即可
     return function unsubscribe() {
+      // 如果未开始执行订阅逻辑，则不需要解绑，直接返回
       if (!isSubscribed) {
         return
       }
-
+      // 正在执行reducer中的订阅，不需要解绑
       if (isDispatching) {
         throw new Error(
           'You may not unsubscribe from a store listener while the reducer is executing. ' +
             'See https://redux.js.org/api/store#subscribelistener for more details.'
         )
       }
-
+      // 定义解绑flag
       isSubscribed = false
-
+      // 将nextListeners队列中的当前listener去除
       ensureCanMutateNextListeners()
       const index = nextListeners.indexOf(listener)
       nextListeners.splice(index, 1)
+      // 设置当前listener为null
       currentListeners = null
     }
   }
 
   /**
+   * 分发action，改变state唯一途径
    * Dispatches an action. It is the only way to trigger a state change.
    *
    * The `reducer` function, used to create the store, will be called with the
@@ -236,6 +248,7 @@ export default function createStore<
    * return something else (for example, a Promise you can await).
    */
   function dispatch(action: A) {
+    // action必须是plain object（通过new Object或{}创建）
     if (!isPlainObject(action)) {
       throw new Error(
         `Actions must be plain objects. Instead, the actual type was: '${kindOf(
@@ -243,34 +256,40 @@ export default function createStore<
         )}'. You may need to add middleware to your store setup to handle dispatching other values, such as 'redux-thunk' to handle dispatching functions. See https://redux.js.org/tutorials/fundamentals/part-4-store#middleware and https://redux.js.org/tutorials/fundamentals/part-6-async-logic#using-the-redux-thunk-middleware for examples.`
       )
     }
-
+    // action的type属性不能是undefined
     if (typeof action.type === 'undefined') {
       throw new Error(
         'Actions may not have an undefined "type" property. You may have misspelled an action type string constant.'
       )
     }
-
+    // 正在dispatch时，不能触发
     if (isDispatching) {
       throw new Error('Reducers may not dispatch actions.')
     }
 
     try {
+      // 设置dispatch的flag
       isDispatching = true
+      // 调用reducer函数，获取最新state
       currentState = currentReducer(currentState, action)
     } finally {
+      // 报错时终止dispatch
       isDispatching = false
     }
 
+    // 遍历执行每个订阅的listener
     const listeners = (currentListeners = nextListeners)
     for (let i = 0; i < listeners.length; i++) {
       const listener = listeners[i]
       listener()
     }
-
+    // 返回action
     return action
   }
 
   /**
+   * 替换 store 当前用来计算 state 的 reducer
+   * 需要实现代码分隔，而且需要立即加载一些 reducer 的时候才可能会用到它。在实现 Redux 热加载机制的时候也可能会用到
    * Replaces the reducer currently used by the store to calculate the state.
    *
    * You might need this if your app implements code splitting and you want to

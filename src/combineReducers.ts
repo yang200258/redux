@@ -123,34 +123,41 @@ export default function combineReducers<M extends ReducersMapObject>(
   ActionFromReducersMapObject<M>
 >
 export default function combineReducers(reducers: ReducersMapObject) {
+  // 获取每个子reducer的key列表
   const reducerKeys = Object.keys(reducers)
+  // 初始化最终reducer
   const finalReducers: ReducersMapObject = {}
   for (let i = 0; i < reducerKeys.length; i++) {
     const key = reducerKeys[i]
 
+    // 开发环境下，如果传入的子reducer为undefined，则警告
     if (process.env.NODE_ENV !== 'production') {
       if (typeof reducers[key] === 'undefined') {
         warning(`No reducer provided for key "${key}"`)
       }
     }
-
+    // 是函数的话，将子reducer复制到最终reducer
     if (typeof reducers[key] === 'function') {
       finalReducers[key] = reducers[key]
     }
   }
+  // 获取最终reducer的key列表
   const finalReducerKeys = Object.keys(finalReducers)
 
   // This is used to make sure we don't warn about the same
   // keys multiple times.
   let unexpectedKeyCache: { [key: string]: true }
+  // 开发环境初始化unexpectedKeyCache
   if (process.env.NODE_ENV !== 'production') {
     unexpectedKeyCache = {}
   }
 
   let shapeAssertionError: unknown
   try {
+    // 调用某个reducer返回state为undefined时，报错，
     assertReducerShape(finalReducers)
   } catch (e) {
+    // 获取调用assertReducerShape的报错信息
     shapeAssertionError = e
   }
 
@@ -161,7 +168,7 @@ export default function combineReducers(reducers: ReducersMapObject) {
     if (shapeAssertionError) {
       throw shapeAssertionError
     }
-
+    // 开发环境判断非预期错误
     if (process.env.NODE_ENV !== 'production') {
       const warningMessage = getUnexpectedStateShapeWarningMessage(
         state,
@@ -173,14 +180,18 @@ export default function combineReducers(reducers: ReducersMapObject) {
         warning(warningMessage)
       }
     }
-
+    // 初始化state值更改flag
     let hasChanged = false
+    // 初始化下一次state
     const nextState: StateFromReducersMapObject<typeof reducers> = {}
     for (let i = 0; i < finalReducerKeys.length; i++) {
       const key = finalReducerKeys[i]
       const reducer = finalReducers[key]
+      // 获取上一次state
       const previousStateForKey = state[key]
+      // 计算当前子reducer后返回的state
       const nextStateForKey = reducer(previousStateForKey, action)
+      // 返回的state不能是undefined
       if (typeof nextStateForKey === 'undefined') {
         const actionType = action && action.type
         throw new Error(
@@ -191,11 +202,15 @@ export default function combineReducers(reducers: ReducersMapObject) {
             `If you want this reducer to hold no value, you can return null instead of undefined.`
         )
       }
+      // 给计算后的state对象赋值
       nextState[key] = nextStateForKey
+      // 判断值是否更改（当前state和上一次state不同时，hasChanged设置true）
       hasChanged = hasChanged || nextStateForKey !== previousStateForKey
     }
+    // 最终reducer的数量和state的数量不同时，hasChanged设置true
     hasChanged =
       hasChanged || finalReducerKeys.length !== Object.keys(state).length
+    // 如果state更改了，则返回下一次nextState，都则返回原state
     return hasChanged ? nextState : state
   }
 }

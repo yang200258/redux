@@ -60,12 +60,15 @@ export default function applyMiddleware<Ext, S = any>(
 export default function applyMiddleware(
   ...middlewares: Middleware[]
 ): StoreEnhancer<any> {
+  // 返回一个参数是createStore的函数，在createStore中通过enhancer调用
   return (createStore: StoreEnhancerStoreCreator) =>
     <S, A extends AnyAction>(
       reducer: Reducer<S, A>,
       preloadedState?: PreloadedState<S>
     ) => {
+      // 先创建store
       const store = createStore(reducer, preloadedState)
+      // 重新定义dispatch
       let dispatch: Dispatch = () => {
         throw new Error(
           'Dispatching while constructing your middleware is not allowed. ' +
@@ -73,6 +76,7 @@ export default function applyMiddleware(
         )
       }
 
+      // 定义middleware参数
       const middlewareAPI: MiddlewareAPI = {
         getState: store.getState,
         dispatch: (action, ...args) => dispatch(action, ...args)
